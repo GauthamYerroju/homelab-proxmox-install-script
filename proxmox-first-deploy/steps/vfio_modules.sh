@@ -1,5 +1,5 @@
 #!/bin/bash
-MODULES=(vfio vfio_iommu_type1 vfio_pci)
+MODULES=(vfio vfio_iommu_type1 vfio_pci) # vfio_virqfd
 MODULE_FILE="/etc/modules"
 [[ $EUID -eq 0 ]] && SUDO="" || SUDO="sudo"
 

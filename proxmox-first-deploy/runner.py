@@ -21,32 +21,37 @@ STEPS = {
     "proxmox_post_install": {
         "desc": "Proxmox post-install",
         "depends": [],
-        "script": "runner-steps/proxmox_post_install.sh"
+        "script": "steps/proxmox_post_install.sh"
     },
     "docker_vm": {
         "desc": "Install Docker VM",
         "depends": [],
-        "script": "runner-steps/docker_vm.sh"
+        "script": "steps/docker_vm.sh"
     },
     "set_swappiness": {
         "desc": "Set vm.swappiness",
         "depends": [],
-        "script": "runner-steps/set_swappiness.sh"
+        "script": "steps/set_swappiness.sh"
     },
     "iommu": {
         "desc": "Enable IOMMU in GRUB",
         "depends": [],
-        "script": "runner-steps/iommu.sh"
+        "script": "steps/iommu.sh"
     },
     "vfio_modules": {
         "desc": "Load VFIO kernel modules",
         "depends": ["iommu"],
-        "script": "runner-steps/vfio_modules.sh"
+        "script": "steps/vfio_modules.sh"
     },
     "pci_passthrough": {
-        "desc": "PCI passthrough setup",
+        "desc": "PCI passthrough VM setup",
         "depends": ["iommu", "vfio_modules"],
-        "script": "runner-steps/pci_passthrough.sh"
+        "script": "steps/pci_passthrough.sh"
+    },
+    "vfio_systemd": {
+        "desc": "PCI passthrough VM service",
+        "depends": ["pci_passthrough"],
+        "script": "steps/vfio_systemd.sh"
     },
 }
 
