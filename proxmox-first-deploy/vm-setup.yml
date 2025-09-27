@@ -5,9 +5,10 @@
   gather_facts: yes
   
   vars:
-    swappiness_value: 10 # Default is typically 60
-
     bash_addons: true
+    home_symlink: true
+
+    swappiness_value: 10 # Default is typically 60
 
     install_packages: true
     autoremove_packages: true
@@ -72,6 +73,12 @@
         sysctl_set: yes
         state: present
         reload: yes
+    
+    - name: Ensure /home/root points to /root
+      ansible.builtin.file:
+        src: /root
+        dest: /home/root
+        state: "{{ 'link' if home_symlink else 'absent' }}"
     
     - name: Add history search and LS customizations to .bashrc
       ansible.builtin.blockinfile:
