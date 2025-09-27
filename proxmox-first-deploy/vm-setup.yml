@@ -7,6 +7,8 @@
   vars:
     swappiness_value: 10 # Default is typically 60
 
+    bash_addons: true
+
     install_packages: true
     autoremove_packages: true
 
@@ -21,20 +23,20 @@
       - openssh-server
       - hdparm
       - smartmontools
+      - starship
       # DE-related
-      - cinnamon-core
-      - gedit
-      - gnome-system-monitor
-      - file-roller
-      - gnome-disk-utility
+      # - cinnamon-core
+      # - gedit
+      # - gnome-system-monitor
+      # - file-roller
+      # - gnome-disk-utility
 
     services_to_disable:
       - wpa_supplicant.service
+      # DE-related
       - blueman-mechanism.service
       - power-profiles-daemon.service
       - ModemManager.service
-      # DE-related
-      - speech-dispatcher.service
 
     networkd_services:
       - systemd-networkd.service
@@ -70,6 +72,26 @@
         sysctl_set: yes
         state: present
         reload: yes
+    
+    - name: Add history search and LS customizations to .bashrc
+      ansible.builtin.blockinfile:
+        path: /home/{{ ansible_user }}/.bashrc
+        block: |
+          # History search and LS customization
+          bind '"\e[A": history-search-backward'
+
+          export TIME_FORMAT="| '%y %b %d, %I:%M:%S %p |"
+
+          export LS_OPTIONS='--group-directories-first --color=auto --hyperlink=auto --time-style=+"$TIME_FORMAT" --si -Gg -C'
+          eval "$(dircolors)"
+          alias lsc="ls $LS_OPTIONS"
+          alias l=lsc
+          alias ll="lsc $LS_OPTIONS -l"
+          alias la="lsc $LS_OPTIONS -la"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        create: yes
+        state: "{{ 'present' if bash_addons else 'absent' }}"
     
     - name: Install base packages
       ansible.builtin.apt:
