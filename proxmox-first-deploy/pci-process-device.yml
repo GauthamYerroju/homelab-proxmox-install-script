@@ -1,0 +1,47 @@
+---
+- name: Check if PCI device exists
+  set_fact:
+    device_found: "{{ pci_list.stdout_lines | select('search', item) | list | length > 0 }}"
+
+- name: Display device not found warning
+  debug:
+    msg: "WARNING: PCI device '{{ item }}' was not found on this host"
+  when: not device_found
+
+- name: Extract PCI information
+  block:
+    - name: Get device line from lspci output
+      set_fact:
+        pci_line: "{{ pci_list.stdout_lines | select('search', item) | list | first }}"
+
+    - name: Extract PCI ID from device line
+      set_fact:
+        pci_id: "{{ pci_line | regex_search('\\[([0-9a-f]{4}:[0-9a-f]{4})\\]', '\\1') | first | default('') }}"
+
+    - name: Find device driver
+      set_fact:
+        pci_address: "{{ pci_line.split()[0] }}"
+    
+    - name: Debug regex matching
+      debug:
+        msg: "{{ pci_drivers.stdout | regex_search(pci_address + '[\\s\\S]*?Kernel driver in use: (\\S+)', '\\1', multiline=True) }}"
+
+    - name: Extract driver information
+      set_fact:
+        current_driver: "{{ pci_drivers.stdout | regex_search(pci_address + '[\\s\\S]*?Kernel driver in use: (\\S+)', '\\1', multiline=True) }}"
+
+    - name: Add to configuration lists
+      set_fact:
+        pci_ids: "{{ pci_ids + [pci_id] }}"
+        blacklist_drivers: "{{ blacklist_drivers + [current_driver] }}"
+      when: pci_id != ''
+
+    - name: Display device information
+      debug:
+        msg:
+          - "Device: {{ item }}"
+          - "PCI ID: {{ pci_id }}"
+          - "Driver: {{ current_driver | default('none') }}"
+          - "Address: {{ pci_address }}"
+
+  when: device_found

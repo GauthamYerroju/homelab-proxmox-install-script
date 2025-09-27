@@ -1,0 +1,123 @@
+---
+- name: VM Setup Playbook
+  hosts: all
+  become: yes
+  gather_facts: yes
+  
+  vars:
+    swappiness_value: 10 # Default is typically 60
+
+    install_packages: true
+    autoremove_packages: true
+
+    disable_networkd_if_nm: true
+    disable_services: true
+
+    disable_autostart: true
+
+    disable_compositing: true # When DE is installed
+    
+    packages:
+      - openssh-server
+      - hdparm
+      - smartmontools
+      # DE-related
+      - cinnamon-core
+      - gedit
+      - gnome-system-monitor
+      - file-roller
+      - gnome-disk-utility
+
+    services_to_disable:
+      - wpa_supplicant.service
+      # DE-related
+      - blueman-mechanism.service
+      - power-profiles-daemon.service
+      - ModemManager.service
+      - speech-dispatcher.service
+
+    networkd_services:
+      - systemd-networkd.service
+      - systemd-networkd-wait-online.service
+      - systemd-network-generator.service
+      - systemd-networkd.socket
+
+    autostart_entries_to_disable:
+      # DE-related
+      - blueman.desktop
+      - org.gnome.SettingsDaemon.Power.desktop
+      - cinnamon-settings-daemon-power.desktop
+      - org.gnome.SettingsDaemon.Rfkill.desktop
+      - org.gnome.SettingsDaemon.Wwan.desktop
+      - org.gnome.SettingsDaemon.PrintNotifications.desktop
+      - cinnamon-settings-daemon-print-notifications.desktop
+      - org.gnome.SettingsDaemon.Smartcard.desktop
+      - cinnamon-settings-daemon-smartcard.desktop
+      - org.gnome.SettingsDaemon.Wacom.desktop
+      - cinnamon-settings-daemon-wacom.desktop
+      - pulseaudio.desktop
+      - xapp-sn-watcher.desktop
+      - xdg-user-dirs-kde.desktop
+      - at-spi-dbus-bus.desktop
+      - gnome-keyring-pkcs11.desktop
+
+
+  tasks:
+    - name: Set swappiness
+      ansible.builtin.sysctl:
+        name: vm.swappiness
+        value: "{{ swappiness_value }}"
+        sysctl_set: yes
+        state: present
+        reload: yes
+    
+    - name: Install base packages
+      ansible.builtin.apt:
+        name: "{{ packages }}"
+        state: "{{ 'present' if install_packages else 'absent' }}"
+        purge: yes
+      ignore_errors: yes
+    
+    - name: Remove unused packages
+      ansible.builtin.apt:
+        autoremove: yes
+        purge: yes
+      when: autoremove_packages
+
+    - name: Gather NetworkManager status
+      ansible.builtin.systemd:
+        name: NetworkManager.service
+      register: nm_status
+
+    - name: Disable systemd-networkd services if NetworkManager active
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: "{{ 'stopped' if disable_networkd_if_nm else 'started' }}"
+        enabled: "{{ 'no' if disable_networkd_if_nm else 'yes' }}"
+      loop: "{{ networkd_services }}"
+      when: nm_status.status is defined and nm_status.status.ActiveState == 'active'
+
+    - name: Disable unneeded services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: "{{ 'stopped' if disable_services else 'started' }}"
+        enabled: "{{ 'no' if disable_services else 'yes' }}"
+      loop: "{{ services_to_disable }}"
+      ignore_errors: yes
+    
+    - name: Disable unneeded autostart entries
+      ansible.builtin.lineinfile:
+        path: "/etc/xdg/autostart/{{ item }}"
+        line: "Hidden=true"
+        state: "{{ 'absent' if disable_autostart else 'present' }}"
+        create: no
+        insertafter: EOF
+      loop: "{{ autostart_entries_to_disable }}"
+      ignore_errors: yes
+
+    - name: Enable or disable Cinnamon compositing
+      ansible.builtin.command: >
+        gsettings set org.cinnamon.muffin compositing-manager
+        {{ 'false' if disable_compositing else 'true' }}
+      become_user: "{{ ansible_user | default(ansible_env.USER) }}"
+      ignore_errors: yes
