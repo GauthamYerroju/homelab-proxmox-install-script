@@ -122,8 +122,13 @@ if confirm "Run VM configuration playbook"; then
     fi
 fi
 
-# ========== 10. Reboot prompt ==========
-if confirm "Reboot host now to activate changes"; then
+# ========== 10. Reboot VM ==========
+if confirm "Reboot VM? (Recommended)"; then
+    qm shutdown $VMID && sleep 10 && qm start $VMID
+fi
+
+# ========== 11. Reboot host ==========
+if confirm "Reboot host? (Recommended)"; then
     echo "Rebooting..."
     $SUDO reboot
 else

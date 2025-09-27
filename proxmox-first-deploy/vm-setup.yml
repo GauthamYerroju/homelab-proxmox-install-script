@@ -30,10 +30,10 @@
 
     services_to_disable:
       - wpa_supplicant.service
-      # DE-related
       - blueman-mechanism.service
       - power-profiles-daemon.service
       - ModemManager.service
+      # DE-related
       - speech-dispatcher.service
 
     networkd_services:
