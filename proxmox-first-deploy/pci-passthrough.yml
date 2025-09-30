@@ -11,22 +11,22 @@
     # Basic system configuration
     swappiness: 10
     ssh_key: .ssh/id_ed25519
-    
+
     # PCIe Passthrough configuration
     pci_passthrough: true
     process_pci_device_path: "pci-process-device.yml"
-    
+
     # Devices to configure for passthrough (search strings)
     passthrough_devices:
       - "SAS2308"           # LSI SAS controller
       # - "ConnectX-3"        # Mellanox network card
-    
+
     # VFIO kernel modules
     vfio_modules:
       - vfio
       - vfio_iommu_type1
       - vfio_pci
-    
+
     # Kernel parameters for IOMMU
     kernel_params: "intel_iommu=on iommu=pt"
 
@@ -210,6 +210,6 @@
   handlers:
     - name: update-grub
       command: update-grub
-      
+
     - name: update-initramfs
       command: update-initramfs -u -k all

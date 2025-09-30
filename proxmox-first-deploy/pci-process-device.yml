@@ -21,7 +21,7 @@
     - name: Find device driver
       set_fact:
         pci_address: "{{ pci_line.split()[0] }}"
-    
+
     - name: Debug regex matching
       debug:
         msg: "{{ pci_drivers.stdout | regex_search(pci_address + '[\\s\\S]*?Kernel driver in use: (\\S+)', '\\1', multiline=True) }}"
@@ -33,8 +33,8 @@
     - name: Add to configuration lists
       set_fact:
         pci_ids: "{{ pci_ids + [pci_id] }}"
-        blacklist_drivers: "{{ blacklist_drivers + [current_driver] }}"
-      when: pci_id != ''
+        blacklist_drivers: "{{ blacklist_drivers + current_driver }}"
+      when: pci_id != '' and current_driver
 
     - name: Display device information
       debug:
