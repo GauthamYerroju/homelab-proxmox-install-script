@@ -20,6 +20,12 @@
     passthrough_devices:
       - "SAS2308"           # LSI SAS controller
       # - "ConnectX-3"        # Mellanox network card
+      - "Sandisk Corp WD PC SN810" # 2TB SSD. Currently the only nvme device. TODO: handle disks separately.
+
+    # Drivers to never blacklist (host must keep access)
+    drivers_whitelist:
+      - nvme
+      - ahci
 
     # VFIO kernel modules
     vfio_modules:

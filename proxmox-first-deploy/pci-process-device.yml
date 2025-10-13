@@ -34,7 +34,7 @@
       set_fact:
         pci_ids: "{{ pci_ids + [pci_id] }}"
         blacklist_drivers: "{{ blacklist_drivers + current_driver }}"
-      when: pci_id != '' and current_driver
+      when: pci_id != '' and current_driver and current_driver not in drivers_whitelist
 
     - name: Display device information
       debug:
