@@ -3,7 +3,7 @@ set -euo pipefail
 
 VMID=100
 VM_NAME="nas-vm"
-INVENTORY_FILE="$HOME/docker-vm-inventory.ini"
+INVENTORY_FILE="$HOME/nas-vm-inventory.ini"
 SSH_KEY="$HOME/.ssh/id_ed25519"
 VM_IP_TIMEOUT=60
 

@@ -3,15 +3,16 @@
   hosts: all
   become: yes
   gather_facts: yes
-  
+
   vars:
     bash_addons: true
     home_symlink: true
 
-    swappiness_value: 10 # Default is typically 60
-
     install_packages: true
     autoremove_packages: true
+
+    install_starship_from_git: true
+    install_mergerfs_from_git: true
 
     disable_networkd_if_nm: true
     disable_services: true
@@ -19,12 +20,15 @@
     disable_autostart: true
 
     disable_compositing: true # When DE is installed
-    
+
+    swappiness_value: 10 # Default is typically 60
+
     packages:
       - openssh-server
       - hdparm
       - smartmontools
-      - starship
+      - snapraid
+      # - mergerfs # repo version outdated, get from git directly
       # DE-related
       # - cinnamon-core
       # - gedit
@@ -32,12 +36,12 @@
       # - file-roller
       # - gnome-disk-utility
 
-    services_to_disable:
-      - wpa_supplicant.service
+    services_to_disable: []
       # DE-related
-      - blueman-mechanism.service
-      - power-profiles-daemon.service
-      - ModemManager.service
+      # - wpa_supplicant.service
+      # - blueman-mechanism.service
+      # - power-profiles-daemon.service
+      # - ModemManager.service
 
     networkd_services:
       - systemd-networkd.service
@@ -73,13 +77,13 @@
         sysctl_set: yes
         state: present
         reload: yes
-    
+
     - name: Ensure /home/root points to /root
       ansible.builtin.file:
         src: /root
         dest: /home/root
         state: "{{ 'link' if home_symlink else 'absent' }}"
-    
+
     - name: Add history search and LS customizations to .bashrc
       ansible.builtin.blockinfile:
         path: /home/{{ ansible_user }}/.bashrc
@@ -87,7 +91,7 @@
           # History search and LS customization
           bind '"\e[A": history-search-backward'
 
-          export TIME_FORMAT="| '%y %b %d, %I:%M:%S %p |"
+          export TIME_FORMAT=" %y-%b-%d, %I:%M:%S %p "
 
           export LS_OPTIONS='--group-directories-first --color=auto --hyperlink=auto --time-style=+"$TIME_FORMAT" --si -Gg -C'
           eval "$(dircolors)"
@@ -99,14 +103,13 @@
         group: "{{ ansible_user }}"
         create: yes
         state: "{{ 'present' if bash_addons else 'absent' }}"
-    
+
     - name: Install base packages
       ansible.builtin.apt:
         name: "{{ packages }}"
         state: "{{ 'present' if install_packages else 'absent' }}"
         purge: yes
-      ignore_errors: yes
-    
+
     - name: Remove unused packages
       ansible.builtin.apt:
         autoremove: yes
@@ -132,8 +135,7 @@
         state: "{{ 'stopped' if disable_services else 'started' }}"
         enabled: "{{ 'no' if disable_services else 'yes' }}"
       loop: "{{ services_to_disable }}"
-      ignore_errors: yes
-    
+
     - name: Disable unneeded autostart entries
       ansible.builtin.lineinfile:
         path: "/etc/xdg/autostart/{{ item }}"
@@ -142,11 +144,83 @@
         create: no
         insertafter: EOF
       loop: "{{ autostart_entries_to_disable }}"
-      ignore_errors: yes
 
     - name: Enable or disable Cinnamon compositing
       ansible.builtin.command: >
         gsettings set org.cinnamon.muffin compositing-manager
         {{ 'false' if disable_compositing else 'true' }}
       become_user: "{{ ansible_user | default(ansible_env.USER) }}"
-      ignore_errors: yes
+      when: ansible_env.XDG_CURRENT_DESKTOP is defined and 'Cinnamon' in ansible_env.XDG_CURRENT_DESKTOP
+
+    - name: Ensure mergerfs installed or removed
+      block:
+        - name: Get latest mergerfs Debian URL
+          ansible.builtin.uri:
+            url: https://api.github.com/repos/trapexit/mergerfs/releases/latest
+            return_content: yes
+          register: mergerfs_releases
+          when: install_mergerfs_from_git
+
+        - name: Set mergerfs download URL
+          set_fact:
+            mergerfs_url: "{{ mergerfs_releases.json.assets
+              | selectattr('name','search','debian-bookworm_amd64.deb')
+              | map(attribute='browser_download_url')
+              | first }}"
+          when: install_mergerfs_from_git
+
+        - name: Log mergerfs download url
+          debug:
+            msg: "Downloading and installing: {{ mergerfs_url }}"
+          when: install_mergerfs_from_git
+
+        - name: Download and install mergerfs
+          ansible.builtin.apt:
+            deb: "{{ mergerfs_url }}"
+          when: install_mergerfs_from_git
+
+        - name: Ensure mergerfs package state
+          ansible.builtin.apt:
+            name: mergerfs
+            state: "{{ 'present' if install_mergerfs_from_git else 'absent' }}"
+
+    - name: Ensure Starship installed or removed
+      block:
+        - name: Get latest Starship release info
+          ansible.builtin.uri:
+            url: https://api.github.com/repos/starship/starship/releases/latest
+            return_content: yes
+          register: starship_release
+          when: install_starship_from_git
+
+        - name: Set Starship download URL (Linux x86_64 musl)
+          set_fact:
+            starship_url: "{{ starship_release.json.assets
+              | selectattr('name','search','x86_64-unknown-linux-musl.tar.gz')
+              | map(attribute='browser_download_url')
+              | first }}"
+          when: install_starship_from_git
+
+        - name: Log starship download url
+          debug:
+            msg: "Downloading and installing: {{ starship_url }}"
+          when: install_starship_from_git
+
+        - name: Download and install Starship
+          ansible.builtin.unarchive:
+            src: "{{ starship_url }}"
+            dest: /usr/local/bin
+            remote_src: yes
+          when: install_starship_from_git
+
+        - name: Ensure Starship binary state
+          ansible.builtin.file:
+            path: /usr/local/bin/starship
+            state: "{{ 'file' if install_starship_from_git else 'absent' }}"
+
+        - name: Ensure Starship init line in .bashrc
+          ansible.builtin.lineinfile:
+            path: /home/{{ ansible_user }}/.bashrc
+            line: 'eval "$(starship init bash)"'
+            state: "{{ 'present' if install_starship_from_git else 'absent' }}"
+            search_string: 'eval "$(starship init bash)"'
