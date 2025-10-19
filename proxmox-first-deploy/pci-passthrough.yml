@@ -2,8 +2,8 @@
 - name: Configure Proxmox Host for PCI(e) Passthrough
   hosts: localhost
   connection: local
-  become: yes
-  gather_facts: yes
+  become: true
+  gather_facts: true
   environment:
     ANSIBLE_DISPLAY_SKIPPED_HOSTS: false
 
@@ -13,14 +13,14 @@
     ssh_key: .ssh/id_ed25519
 
     # PCIe Passthrough configuration
-    pci_passthrough: true
+    pci_passthrough: false
     process_pci_device_path: "pci-process-device.yml"
 
     # Devices to configure for passthrough (search strings)
     passthrough_devices:
       - "SAS2308"           # LSI SAS controller
       # - "ConnectX-3"        # Mellanox network card
-      - "Sandisk Corp WD PC SN810" # 2TB SSD. Currently the only nvme device. TODO: handle disks separately.
+      # - "Sandisk Corp WD PC SN810" # 2TB SSD. Currently the only nvme device. TODO: handle disks separately.
 
     # Drivers to never blacklist (host must keep access)
     drivers_whitelist:
@@ -39,7 +39,7 @@
   tasks:
     # ===== Configuration Display =====
     - name: Display current configuration
-      debug:
+      ansible.builtin.debug:
         msg:
           - "Swappiness: {{ swappiness }}"
           - "SSH Key: {{ ssh_key }}"
@@ -50,40 +50,40 @@
 
     # ===== General System Setup =====
     - name: Configure VM swappiness
-      sysctl:
+      ansible.posix.sysctl:
         name: vm.swappiness
         value: "{{ swappiness }}"
         state: present
-        reload: yes
+        reload: true
 
     - name: Generate SSH key pair for host
-      openssh_keypair:
+      community.crypto.openssh_keypair:
         path: "{{ ansible_env.HOME }}/{{ ssh_key }}"
         type: ed25519
-        force: no
+        force: false
 
     # ===== GRUB Configuration =====
     - name: Read current GRUB configuration
-      slurp:
+      ansible.builtin.slurp:
         src: /etc/default/grub
       register: grub_content
 
     - name: Parse GRUB configuration
-      set_fact:
+      ansible.builtin.set_fact:
         grub_config: "{{ grub_content.content | b64decode }}"
         grub_has_params: "{{ (grub_content.content | b64decode) | regex_search(kernel_params) is not none }}"
 
     - name: Enable IOMMU in GRUB configuration
-      lineinfile:
+      ansible.builtin.lineinfile:
         path: /etc/default/grub
         regexp: '^GRUB_CMDLINE_LINUX_DEFAULT="(.*)"'
         line: 'GRUB_CMDLINE_LINUX_DEFAULT="\1 {{ kernel_params }}"'
-        backrefs: yes
+        backrefs: true
       notify: update-grub
       when: pci_passthrough and not grub_has_params
 
     - name: Remove IOMMU kernel parameters from GRUB
-      replace:
+      ansible.builtin.replace:
         path: /etc/default/grub
         regexp: '\s*{{ kernel_params | regex_escape }}'
         replace: ''
@@ -92,19 +92,20 @@
 
     # ===== VFIO Module Configuration =====
     - name: Configure VFIO kernel modules for loading
-      copy:
+      ansible.builtin.copy:
         dest: /etc/modules-load.d/vfio.conf
         content: |
           # VFIO modules for PCIe passthrough
           {% for mod in vfio_modules %}
           {{ mod }}
           {% endfor %}
-        backup: yes
+        backup: true
+        mode: '0644'
       notify: update-initramfs
       when: pci_passthrough
 
     - name: Remove VFIO kernel modules configuration
-      file:
+      ansible.builtin.file:
         path: /etc/modules-load.d/vfio.conf
         state: absent
       notify: update-initramfs
@@ -112,26 +113,26 @@
 
     # ===== PCIe Device Discovery =====
     - name: Discover PCI devices
-      command: lspci -nn
+      ansible.builtin.command: lspci -nn
       register: pci_list
       changed_when: false
       when: pci_passthrough
 
     - name: Get PCI device drivers
-      command: lspci -k
+      ansible.builtin.command: lspci -k
       register: pci_drivers
       changed_when: false
       when: pci_passthrough
 
     - name: Initialize device tracking variables
-      set_fact:
+      ansible.builtin.set_fact:
         pci_ids: []
         blacklist_drivers: []
       when: pci_passthrough
 
     # ===== Process Each Passthrough Device =====
     - name: Process passthrough devices
-      include_tasks: "{{ process_pci_device_path }}"
+      ansible.builtin.include_tasks: "{{ process_pci_device_path }}"
       loop: "{{ passthrough_devices }}"
       loop_control:
         label: "{{ item }}"
@@ -139,17 +140,18 @@
 
     # ===== Configure Device Binding =====
     - name: Bind PCI devices to vfio-pci driver
-      copy:
+      ansible.builtin.copy:
         dest: /etc/modprobe.d/vfio-pci.conf
         content: |
           # Bind specific PCI devices to vfio-pci for passthrough
           options vfio-pci ids={{ pci_ids | join(",") }}
-        backup: yes
+        backup: true
+        mode: '0644'
       notify: update-initramfs
       when: pci_passthrough and (pci_ids | length > 0)
 
     - name: Remove vfio-pci device binding
-      file:
+      ansible.builtin.file:
         path: /etc/modprobe.d/vfio-pci.conf
         state: absent
       notify: update-initramfs
@@ -157,7 +159,7 @@
 
     # ===== Driver Blacklist Configuration =====
     - name: Blacklist conflicting drivers
-      copy:
+      ansible.builtin.copy:
         dest: /etc/modprobe.d/blacklist-passthrough.conf
         content: |
           # Blacklist drivers for PCIe passthrough devices
@@ -166,12 +168,13 @@
           blacklist {{ driver }}
           {% endif %}
           {% endfor %}
-        backup: yes
+        backup: true
+        mode: '0644'
       notify: update-initramfs
       when: pci_passthrough and (blacklist_drivers | select | length > 0)
 
     - name: Remove driver blacklist
-      file:
+      ansible.builtin.file:
         path: /etc/modprobe.d/blacklist-passthrough.conf
         state: absent
       notify: update-initramfs
@@ -181,31 +184,31 @@
     # - name: Gather passthrough config
     #   block:
     #     - name: Read GRUB kernel params
-    #       command: grep GRUB_CMDLINE_LINUX_DEFAULT /etc/default/grub
+    #       ansible.builtin.command: grep GRUB_CMDLINE_LINUX_DEFAULT /etc/default/grub
     #       register: grub_line
     #       changed_when: false
     #       failed_when: false
 
     #     - name: Read VFIO modules
-    #       command: cat /etc/modules-load.d/vfio.conf
+    #       ansible.builtin.command: cat /etc/modules-load.d/vfio.conf
     #       register: vfio_mods
     #       changed_when: false
     #       failed_when: false
 
     #     - name: Read vfio-pci binding
-    #       command: cat /etc/modprobe.d/vfio-pci.conf
+    #       ansible.builtin.command: cat /etc/modprobe.d/vfio-pci.conf
     #       register: vfio_pci
     #       changed_when: false
     #       failed_when: false
 
     #     - name: Read blacklisted drivers
-    #       command: cat /etc/modprobe.d/blacklist-passthrough.conf
+    #       ansible.builtin.command: cat /etc/modprobe.d/blacklist-passthrough.conf
     #       register: vfio_blacklist
     #       changed_when: false
     #       failed_when: false
 
     - name: Display completion message
-      debug:
+      ansible.builtin.debug:
         msg:
           - "PCIe passthrough configuration completed"
           - "Found {{ pci_ids | length }} devices for passthrough"
@@ -213,9 +216,34 @@
           - "Reboot required to apply changes"
       when: pci_passthrough
 
+    # - name: Ensure keyring directory exists
+    #   ansible.builtin.file:
+    #     path: /etc/apt/keyrings
+    #     state: directory
+    #     mode: '0755'
+
+    # - name: Add eza apt repository (Deb822 format)
+    #   ansible.builtin.deb822_repository:
+    #     name: gierens
+    #     types: [deb]
+    #     uris: http://deb.gierens.de
+    #     suites: [stable]
+    #     components: [main]
+    #     signed_by: https://raw.githubusercontent.com/eza-community/eza/main/deb.asc
+    #     enabled: true
+    #     state: present
+    #     update_cache: true
+
+    # - name: Install eza
+    #   ansible.builtin.apt:
+    #     name: eza
+    #     state: present
+
   handlers:
     - name: update-grub
-      command: update-grub
+      ansible.builtin.command: update-grub
+      changed_when: true
 
     - name: update-initramfs
-      command: update-initramfs -u -k all
+      ansible.builtin.command: update-initramfs -u -k all
+      changed_when: true
