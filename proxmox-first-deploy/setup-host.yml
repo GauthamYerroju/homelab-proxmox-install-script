@@ -1,0 +1,39 @@
+---
+- name: Configure Proxmox Host
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+  environment:
+    ANSIBLE_DISPLAY_SKIPPED_HOSTS: false
+
+  vars:
+    # Basic system configuration
+    swappiness: 10
+
+  tasks:
+    # ===== Set defaults for arguments =====
+    - set_fact:
+        ssh_key_name: "{{ ssh_key_name | default('id_ed25519') }}"
+
+
+    # ===== Configuration Display =====
+    - name: Display current configuration
+      ansible.builtin.debug:
+        msg:
+          - "Swappiness: {{ swappiness }}"
+          - "SSH Key: {{ ssh_key_name }}"
+
+    # ===== General System Setup =====
+    - name: Configure VM swappiness
+      ansible.posix.sysctl:
+        name: vm.swappiness
+        value: "{{ swappiness }}"
+        state: present
+        reload: true
+
+    - name: Generate SSH key pair for host
+      community.crypto.openssh_keypair:
+        path: "{{ ansible_env.HOME }}/.ssh/{{ ssh_key_name }}"
+        type: ed25519
+        force: false
