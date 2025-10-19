@@ -4,13 +4,15 @@ set -euo pipefail
 VMID=100
 VM_NAME="nas-vm"
 INVENTORY_FILE="$HOME/nas-vm-inventory.ini"
-SSH_KEY="$HOME/.ssh/id_ed25519"
+SSH_KEY_NAME="id_ed25519_ansible_vm_control"
+SSH_KEY="$HOME/.ssh/$SSH_KEY_NAME"
 VM_IP_TIMEOUT=60
 
 POST_INSTALL_SCRIPT="./pve-post-install.sh"
 DOCKER_VM_SCRIPT="./install-docker-vm.sh"
-PVE_PASSTHROUGH_PLAYBOOK="./pci-passthrough.yml"
-VM_PLAYBOOK="./vm-setup.yml"
+HOST_PLAYBOOK="./setup-host.yml"
+VM_PLAYBOOK="./setup-vm.yml"
+PASSTHROUGH_PLAYBOOK="./passthrough.yml"
 
 source ./utils.sh
 
@@ -18,7 +20,15 @@ source ./utils.sh
 if confirm "Install prerequisites (git, ansible-core, etc.)"; then
     echo "Installing prerequisites..."
     $SUDO apt update
-    $SUDO apt install -y git jq ansible-core
+    $SUDO apt install -y git jq pipx
+    pipx ensurepath
+    for pkg in ansible-core; do
+        pipx install "$pkg"
+    done
+    source /root/.bashrc
+    for collection in ansible.posix community.crypto; do
+        ansible-galaxy collection install  "$collection"
+    done
     echo "✅ Prerequisites installed (ansible version: $(ansible --version | head -n1))"
 fi
 
@@ -42,14 +52,14 @@ if confirm "Run Proxmox post-install script"; then
     fi
 fi
 
-# ========== 4. Run PCI passthrough Ansible playbook ==========
-if confirm "Configure PCI passthrough on host via Ansible"; then
-    if [[ -f "$PVE_PASSTHROUGH_PLAYBOOK" ]]; then
-        echo "Running PCI passthrough playbook..."
-        $SUDO ansible-playbook "$PVE_PASSTHROUGH_PLAYBOOK" || { echo "❌ PCI passthrough playbook failed"; exit 1; }
-        echo "✅ PCI passthrough configuration applied"
+# ========== 4. Run host setup ansible playbook ==========
+if confirm "Run host setup ansible playbook"; then
+    if [[ -f "$HOST_PLAYBOOK" ]]; then
+        echo "Running host configuration playbook..."
+        $SUDO ansible-playbook "$HOST_PLAYBOOK" -e "ssh_key_name=$SSH_KEY_NAME" || { echo "❌ Host playbook failed"; exit 1; }
+        echo "✅ Host configuration applied"
     else
-        echo "❌ Playbook not found: $PVE_PASSTHROUGH_PLAYBOOK"
+        echo "❌ Playbook not found: $HOST_PLAYBOOK"
     fi
 fi
 
@@ -91,6 +101,10 @@ if confirm "Fetch VM IP via guest agent"; then
     else
         echo "✅ VM IP detected: $vm_ip"
     fi
+else
+    if confirm "Enter VM IP manually?"; then
+        read -p "Enter VM IP: " vm_ip
+    fi
 fi
 
 # ========== 7. Copy SSH key to VM ==========
@@ -119,6 +133,20 @@ if confirm "Run VM configuration playbook"; then
         echo "✅ VM configuration applied"
     else
         echo "❌ VM playbook not found: $VM_PLAYBOOK"
+    fi
+fi
+
+# ================================================
+if [[ -n "$vm_ip" ]]; then
+    if confirm "Passthrough SATA SSD with PLP (for configs)?"; then
+        qm set $VMID -scsi1 /dev/disk/by-id/ata-INTEL_SSDSC2BB480G7_PHDV652506A3480BGN,ssd=1,serial=INTEL_SSDSC2BB480G7,aio=io_uring,cache=none,discard=on,size=468851544K
+    fi
+    # TODO: Figure out PCI IDs by name
+    if confirm "Passthrough nvme (for tiered cache)?"; then
+        qm set $VMID -hostpci0 02:00,pcie=1
+    fi
+    if confirm "Passthrough LSI SAS2308 (controller for all data disks)?"; then
+        qm set $VMID -hostpci1 01:00,pcie=1
     fi
 fi
 
