@@ -1,8 +1,8 @@
 ---
-- name: VM Setup Playbook
+- name: Configure Docker VM
   hosts: all
-  become: yes
-  gather_facts: yes
+  become: true
+  gather_facts: true
 
   vars:
     bash_addons: true
@@ -23,12 +23,40 @@
 
     swappiness_value: 10 # Default is typically 60
 
+    map_drives: true
+    mount_disks:
+      scsi-0QEMU_QEMU_HARDDISK_INTEL_SSDSC2BB480G7-part1: "/mnt/sata1"
+      nvme-PC_SN810_NVMe_WDC_2048GB_2153J2440608-part1: "/mnt/nvme1"
+      ata-WDC_WUH721414ALE600_9JGA3VJT-part1: "/mnt/hdd1"
+      ata-WDC_WUH721414ALE600_9JGDEA0T-part1: "/mnt/hdd2"
+      ata-TOSHIBA_HDWG11A_49F0A01PFATG-part1: "/mnt/hdd3"
+      ata-TOSHIBA_HDWG11A_49F0A025FATG-part1: "/mnt/hdd4"
+      ata-WDC_WUH721414ALE600_9JGDEENT-part1: "/mnt/parity1"
+      ata-WDC_WUH721414ALE600_9JGMYJYT-part1: "/mnt/parity2"
+
+    mergerfs_initial_directories:
+      configs: "/mnt/sata1"
+      ephemeral: "/mnt/nvme1"
+      triage: "/mnt/nvme1"
+      documents: "/mnt/nvme1"
+      media: "/mnt/nvme1"
+      photos: "/mnt/hdd1"
+      backups: "/mnt/hdd1"
+
+    mergerfs_pools:
+      data: "/mnt/sata1:/mnt/nvme1:/mnt/hdd1:/mnt/hdd2:/mnt/hdd3:/mnt/hdd4"
+
     packages:
       - openssh-server
       - hdparm
       - smartmontools
+      - parted
       - snapraid
       # - mergerfs # repo version outdated, get from git directly
+      # Shell UX tools
+      # - duf
+      # - tldr
+      # - micro
       # DE-related
       # - cinnamon-core
       # - gedit
@@ -49,34 +77,68 @@
       - systemd-network-generator.service
       - systemd-networkd.socket
 
-    autostart_entries_to_disable:
+    autostart_entries_to_disable: []
       # DE-related
-      - blueman.desktop
-      - org.gnome.SettingsDaemon.Power.desktop
-      - cinnamon-settings-daemon-power.desktop
-      - org.gnome.SettingsDaemon.Rfkill.desktop
-      - org.gnome.SettingsDaemon.Wwan.desktop
-      - org.gnome.SettingsDaemon.PrintNotifications.desktop
-      - cinnamon-settings-daemon-print-notifications.desktop
-      - org.gnome.SettingsDaemon.Smartcard.desktop
-      - cinnamon-settings-daemon-smartcard.desktop
-      - org.gnome.SettingsDaemon.Wacom.desktop
-      - cinnamon-settings-daemon-wacom.desktop
-      - pulseaudio.desktop
-      - xapp-sn-watcher.desktop
-      - xdg-user-dirs-kde.desktop
-      - at-spi-dbus-bus.desktop
-      - gnome-keyring-pkcs11.desktop
+      # - blueman.desktop
+      # - org.gnome.SettingsDaemon.Power.desktop
+      # - cinnamon-settings-daemon-power.desktop
+      # - org.gnome.SettingsDaemon.Rfkill.desktop
+      # - org.gnome.SettingsDaemon.Wwan.desktop
+      # - org.gnome.SettingsDaemon.PrintNotifications.desktop
+      # - cinnamon-settings-daemon-print-notifications.desktop
+      # - org.gnome.SettingsDaemon.Smartcard.desktop
+      # - cinnamon-settings-daemon-smartcard.desktop
+      # - org.gnome.SettingsDaemon.Wacom.desktop
+      # - cinnamon-settings-daemon-wacom.desktop
+      # - pulseaudio.desktop
+      # - xapp-sn-watcher.desktop
+      # - xdg-user-dirs-kde.desktop
+      # - at-spi-dbus-bus.desktop
+      # - gnome-keyring-pkcs11.desktop
 
 
   tasks:
     - name: Set swappiness
-      ansible.builtin.sysctl:
+      ansible.posix.sysctl:
         name: vm.swappiness
         value: "{{ swappiness_value }}"
-        sysctl_set: yes
+        sysctl_set: true
         state: present
-        reload: yes
+        reload: true
+
+    - name: Mount disks to specific mount points for mergerfs
+      ansible.posix.mount:
+        path: "{{ item.value }}"
+        src: "/dev/disk/by-id/{{ item.key }}"
+        fstype: ext4
+        opts: defaults,relatime,barrier=1,commit=60,errors=remount-ro
+        state: "{{ 'mounted' if map_drives else 'absent' }}"
+      loop: "{{ mount_disks | dict2items }}"
+      loop_control:
+        label: "{{ item.key }} -> {{ item.value }}"
+      notify: reload-mounts
+
+    - name: Mount mergerfs pool
+      ansible.posix.mount:
+        path: "/mnt/pool/{{ item.key }}"
+        src: "{{ item.value }}"
+        fstype: fuse.mergerfs
+        opts: defaults,allow_other,use_ino,category.create=epmfs,minfreespace=10G
+        state: "{{ 'mounted' if install_mergerfs_from_git and map_drives else 'absent' }}"
+      loop: "{{ mergerfs_pools | dict2items }}"
+      loop_control:
+        label: "{{ item.key }} -> {{ item.value }}"
+      notify: reload-mounts
+
+    - name: Initialize directories to seed location for mergerfs epmfs
+      ansible.builtin.file:
+        path: "{{ item.value }}/{{ item.key }}"
+        state: directory # Not conditional so that existing directories with data aren't deleted
+        mode: '0755'
+      loop: "{{ mergerfs_initial_directories | dict2items }}"
+      loop_control:
+        label: "{{ item.key }} -> {{ item.value }}"
+      when: map_drives and install_mergerfs_from_git
 
     - name: Ensure /home/root points to /root
       ansible.builtin.file:
@@ -101,47 +163,49 @@
           alias la="lsc $LS_OPTIONS -la"
         owner: "{{ ansible_user }}"
         group: "{{ ansible_user }}"
-        create: yes
+        create: true
+        mode: '0644'
         state: "{{ 'present' if bash_addons else 'absent' }}"
 
     - name: Install base packages
       ansible.builtin.apt:
         name: "{{ packages }}"
         state: "{{ 'present' if install_packages else 'absent' }}"
-        purge: yes
+        purge: true
+        update_cache: true
 
     - name: Remove unused packages
       ansible.builtin.apt:
-        autoremove: yes
-        purge: yes
+        autoremove: true
+        purge: true
       when: autoremove_packages
 
     - name: Gather NetworkManager status
-      ansible.builtin.systemd:
+      ansible.builtin.systemd_service:
         name: NetworkManager.service
       register: nm_status
 
     - name: Disable systemd-networkd services if NetworkManager active
-      ansible.builtin.systemd:
+      ansible.builtin.systemd_service:
         name: "{{ item }}"
         state: "{{ 'stopped' if disable_networkd_if_nm else 'started' }}"
-        enabled: "{{ 'no' if disable_networkd_if_nm else 'yes' }}"
+        enabled: "{{ false if disable_networkd_if_nm else true }}"
       loop: "{{ networkd_services }}"
       when: nm_status.status is defined and nm_status.status.ActiveState == 'active'
 
     - name: Disable unneeded services
-      ansible.builtin.systemd:
+      ansible.builtin.systemd_service:
         name: "{{ item }}"
         state: "{{ 'stopped' if disable_services else 'started' }}"
-        enabled: "{{ 'no' if disable_services else 'yes' }}"
+        enabled: "{{ false if disable_services else true }}"
       loop: "{{ services_to_disable }}"
 
     - name: Disable unneeded autostart entries
       ansible.builtin.lineinfile:
         path: "/etc/xdg/autostart/{{ item }}"
         line: "Hidden=true"
-        state: "{{ 'absent' if disable_autostart else 'present' }}"
-        create: no
+        state: "{{ 'present' if disable_autostart else 'absent' }}"
+        create: false
         insertafter: EOF
       loop: "{{ autostart_entries_to_disable }}"
 
@@ -150,6 +214,7 @@
         gsettings set org.cinnamon.muffin compositing-manager
         {{ 'false' if disable_compositing else 'true' }}
       become_user: "{{ ansible_user | default(ansible_env.USER) }}"
+      changed_when: true
       when: ansible_env.XDG_CURRENT_DESKTOP is defined and 'Cinnamon' in ansible_env.XDG_CURRENT_DESKTOP
 
     - name: Ensure mergerfs installed or removed
@@ -157,12 +222,12 @@
         - name: Get latest mergerfs Debian URL
           ansible.builtin.uri:
             url: https://api.github.com/repos/trapexit/mergerfs/releases/latest
-            return_content: yes
+            return_content: true
           register: mergerfs_releases
           when: install_mergerfs_from_git
 
         - name: Set mergerfs download URL
-          set_fact:
+          ansible.builtin.set_fact:
             mergerfs_url: "{{ mergerfs_releases.json.assets
               | selectattr('name','search','debian-bookworm_amd64.deb')
               | map(attribute='browser_download_url')
@@ -170,7 +235,7 @@
           when: install_mergerfs_from_git
 
         - name: Log mergerfs download url
-          debug:
+          ansible.builtin.debug:
             msg: "Downloading and installing: {{ mergerfs_url }}"
           when: install_mergerfs_from_git
 
@@ -189,12 +254,12 @@
         - name: Get latest Starship release info
           ansible.builtin.uri:
             url: https://api.github.com/repos/starship/starship/releases/latest
-            return_content: yes
+            return_content: true
           register: starship_release
           when: install_starship_from_git
 
         - name: Set Starship download URL (Linux x86_64 musl)
-          set_fact:
+          ansible.builtin.set_fact:
             starship_url: "{{ starship_release.json.assets
               | selectattr('name','search','x86_64-unknown-linux-musl.tar.gz')
               | map(attribute='browser_download_url')
@@ -202,7 +267,7 @@
           when: install_starship_from_git
 
         - name: Log starship download url
-          debug:
+          ansible.builtin.debug:
             msg: "Downloading and installing: {{ starship_url }}"
           when: install_starship_from_git
 
@@ -210,13 +275,15 @@
           ansible.builtin.unarchive:
             src: "{{ starship_url }}"
             dest: /usr/local/bin
-            remote_src: yes
+            remote_src: true
+            mode: '0755'
           when: install_starship_from_git
 
         - name: Ensure Starship binary state
           ansible.builtin.file:
             path: /usr/local/bin/starship
             state: "{{ 'file' if install_starship_from_git else 'absent' }}"
+            mode: '0755'
 
         - name: Ensure Starship init line in .bashrc
           ansible.builtin.lineinfile:
@@ -224,3 +291,40 @@
             line: 'eval "$(starship init bash)"'
             state: "{{ 'present' if install_starship_from_git else 'absent' }}"
             search_string: 'eval "$(starship init bash)"'
+    
+    - name: Ensure keyring directory exists
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Add eza apt repository (Deb822 format)
+      ansible.builtin.deb822_repository:
+        name: gierens
+        types: [deb]
+        uris: http://deb.gierens.de
+        suites: [stable]
+        components: [main]
+        signed_by: https://raw.githubusercontent.com/eza-community/eza/main/deb.asc
+        enabled: true
+        state: present
+      register: eza_repo
+
+    - name: Update apt cache after adding eza repository
+      ansible.builtin.apt:
+        update_cache: true
+      when: eza_repo is changed
+
+    - name: Install eza
+      ansible.builtin.apt:
+        name: eza
+        state: present
+
+  handlers:
+    - name: reload-mounts
+      ansible.builtin.command: mount -av
+      changed_when: true
+
+    - name: update-initramfs
+      ansible.builtin.command: update-initramfs -u -k all
+      changed_when: true
