@@ -1,0 +1,53 @@
+services:
+  pia:
+    image: ghcr.io/hotio/base:alpinevpn
+    container_name: pia
+    cap_add:
+      - NET_ADMIN
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+      - net.ipv6.conf.all.disable_ipv6=1
+    ports:
+      - 8080:8080 # qbittorrent
+    volumes:
+      - ${CONFIG_PATH}/pia:/config
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - UMASK=002
+      - TZ=${TZ}
+      - VPN_ENABLED=true
+      - VPN_CONF=wg0
+      - VPN_PROVIDER=pia
+      - VPN_LAN_NETWORK=192.168.1.0/24,10.0.0.0/24
+      - VPN_LAN_LEAK_ENABLED=false
+      - VPN_EXPOSE_PORTS_ON_LAN=8080/tcp,8080/udp
+      - VPN_AUTO_PORT_FORWARD=true
+      - VPN_AUTO_PORT_FORWARD_TO_PORTS=
+      - VPN_FIREWALL_TYPE=auto
+      - VPN_HEALTHCHECK_ENABLED=false
+      - VPN_NAMESERVERS=
+      - VPN_PIA_USER=${PIA_USERNAME}
+      - VPN_PIA_PASS=${PIA_PASSWORD}
+      - VPN_PIA_PREFERRED_REGION=${PIA_REGION}
+      - VPN_PIA_DIP_TOKEN=no
+      - VPN_PIA_PORT_FORWARD_PERSIST=true
+      - PRIVOXY_ENABLED=false
+      - UNBOUND_ENABLED=false
+      - UNBOUND_NAMESERVERS
+  qbittorrent:
+    image: ghcr.io/hotio/qbittorrent
+    container_name: qbittorrent
+    network_mode: "service:pia"
+    volumes:
+      - ${CONFIG_PATH}/qbittorrent:/config
+      - ${ACTIVE_PATH}/torrent-downloads:/data
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - UMASK=002
+      - TZ=${TZ}
+      # - WEBUI_PORTS=8080/tcp,8080/udp # set on VPN_EXPOSE_PORTS_ON_LAN in vpn container
+      - LIBTORRENT=v1
+    # ports: # Move to vpn container
+    #   - 8080:8080 # qbittorrent
