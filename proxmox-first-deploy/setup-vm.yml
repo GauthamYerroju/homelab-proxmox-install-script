@@ -23,28 +23,35 @@
 
     swappiness_value: 10 # Default is typically 60
 
+    deploy_arr_stack: true
+
     map_drives: true
-    mount_disks:
-      scsi-0QEMU_QEMU_HARDDISK_INTEL_SSDSC2BB480G7-part1: "/mnt/sata1"
-      nvme-PC_SN810_NVMe_WDC_2048GB_2153J2440608-part1: "/mnt/nvme1"
-      ata-WDC_WUH721414ALE600_9JGA3VJT-part1: "/mnt/hdd1"
-      ata-WDC_WUH721414ALE600_9JGDEA0T-part1: "/mnt/hdd2"
-      ata-TOSHIBA_HDWG11A_49F0A01PFATG-part1: "/mnt/hdd3"
-      ata-TOSHIBA_HDWG11A_49F0A025FATG-part1: "/mnt/hdd4"
-      ata-WDC_WUH721414ALE600_9JGDEENT-part1: "/mnt/parity1"
-      ata-WDC_WUH721414ALE600_9JGMYJYT-part1: "/mnt/parity2"
-
-    mergerfs_initial_directories:
-      configs: "/mnt/sata1"
-      ephemeral: "/mnt/nvme1"
-      triage: "/mnt/nvme1"
-      documents: "/mnt/nvme1"
-      media: "/mnt/nvme1"
-      photos: "/mnt/hdd1"
-      backups: "/mnt/hdd1"
-
-    mergerfs_pools:
-      data: "/mnt/sata1:/mnt/nvme1:/mnt/hdd1:/mnt/hdd2:/mnt/hdd3:/mnt/hdd4"
+    drive_mount_options: defaults,relatime,barrier=1,commit=60,errors=remount-ro
+    pool_mount_options: defaults,allow_other,use_ino,category.create=epmfs,minfreespace=10G
+    pre_mount_dirs:
+      - /mnt/.pools
+      - /mnt/.drives
+    mount_drives:
+      # Configs location (SATA with PLP)
+      /mnt/.drives/sata1: scsi-0QEMU_QEMU_HARDDISK_INTEL_SSDSC2BB480G7-part1
+      # Working area (large NVME)
+      /mnt/.drives/nvme1: nvme-PC_SN810_NVMe_WDC_2048GB_2153J2440608-part1
+      # Parity disks (Ultrastars, extra-durable)
+      /mnt/.drives/parity1: ata-WDC_WUH721414ALE600_9JGDEENT-part1
+      /mnt/.drives/parity2: ata-WDC_WUH721414ALE600_9JGMYJYT-part1
+      # Data pool (Ultrastars, extra-durable)
+      /mnt/.drives/hdd1: ata-WDC_WUH721414ALE600_9JGA3VJT-part1
+      /mnt/.drives/hdd2: ata-WDC_WUH721414ALE600_9JGDEA0T-part1
+      # Data pool (Toshiba N300s, 1/2 as durable as Ultrastars)
+      /mnt/.drives/hdd3: ata-TOSHIBA_HDWG11A_49F0A01PFATG-part1
+      /mnt/.drives/hdd4: ata-TOSHIBA_HDWG11A_49F0A025FATG-part1
+    mount_pools:
+      # Mergerfs pool (for HDDs)
+      /mnt/.pools/hdds: /mnt/.drives/hdd1:/mnt/.drives/hdd2:/mnt/.drives/hdd3:/mnt/.drives/hdd4
+    mount_dirs:
+      /mnt/data: /mnt/.pools/hdds
+      /mnt/config: /mnt/.drives/sata1
+      /mnt/active: /mnt/.drives/nvme1
 
     packages:
       - openssh-server
@@ -106,39 +113,53 @@
         state: present
         reload: true
 
-    - name: Mount disks to specific mount points for mergerfs
-      ansible.posix.mount:
-        path: "{{ item.value }}"
-        src: "/dev/disk/by-id/{{ item.key }}"
-        fstype: ext4
-        opts: defaults,relatime,barrier=1,commit=60,errors=remount-ro
-        state: "{{ 'mounted' if map_drives else 'absent' }}"
-      loop: "{{ mount_disks | dict2items }}"
-      loop_control:
-        label: "{{ item.key }} -> {{ item.value }}"
-      notify: reload-mounts
+    - name: Mount drives and create directories for containers
+      block:
+        - name: Initialize directories
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: directory # Not conditional so that existing directories with data aren't deleted
+            mode: '0755'
+          loop: "{{ pre_mount_dirs }}"
+          loop_control:
+            label: "{{ item }}"
+          when: map_drives
 
-    - name: Mount mergerfs pool
-      ansible.posix.mount:
-        path: "/mnt/pool/{{ item.key }}"
-        src: "{{ item.value }}"
-        fstype: fuse.mergerfs
-        opts: defaults,allow_other,use_ino,category.create=epmfs,minfreespace=10G
-        state: "{{ 'mounted' if install_mergerfs_from_git and map_drives else 'absent' }}"
-      loop: "{{ mergerfs_pools | dict2items }}"
-      loop_control:
-        label: "{{ item.key }} -> {{ item.value }}"
-      notify: reload-mounts
+        - name: Mount drives to sensible mount points
+          ansible.posix.mount:
+            src: "/dev/disk/by-id/{{ item.value }}"
+            path: "{{ item.key }}"
+            fstype: ext4
+            opts: "{{ drive_mount_options }}"
+            state: "{{ 'mounted' if map_drives else 'absent' }}"
+          loop: "{{ mount_drives | dict2items }}"
+          loop_control:
+            label: "{{ item }}"
+          # notify: reload-mounts
 
-    - name: Initialize directories to seed location for mergerfs epmfs
-      ansible.builtin.file:
-        path: "{{ item.value }}/{{ item.key }}"
-        state: directory # Not conditional so that existing directories with data aren't deleted
-        mode: '0755'
-      loop: "{{ mergerfs_initial_directories | dict2items }}"
-      loop_control:
-        label: "{{ item.key }} -> {{ item.value }}"
-      when: map_drives and install_mergerfs_from_git
+        - name: Mount mergerfs pools
+          ansible.posix.mount:
+            src: "{{ item.value }}"
+            path: "{{ item.key }}"
+            fstype: fuse.mergerfs
+            opts: "{{ pool_mount_options }}"
+            state: "{{ 'mounted' if map_drives else 'absent' }}"
+          loop: "{{ mount_pools | dict2items }}"
+          loop_control:
+            label: "{{ item }}"
+          # notify: reload-mounts
+
+        - name: Mount directories for use by apps
+          ansible.posix.mount:
+            src: "{{ item.value }}"
+            path: "{{ item.key }}"
+            fstype: none
+            opts: bind
+            state: "{{ 'mounted' if map_drives else 'absent' }}"
+          loop: "{{ mount_dirs | dict2items}}"
+          loop_control:
+            label: "{{ item }}"
+          # notify: reload-mounts
 
     - name: Ensure /home/root points to /root
       ansible.builtin.file:
@@ -291,7 +312,7 @@
             line: 'eval "$(starship init bash)"'
             state: "{{ 'present' if install_starship_from_git else 'absent' }}"
             search_string: 'eval "$(starship init bash)"'
-    
+
     - name: Ensure keyring directory exists
       ansible.builtin.file:
         path: /etc/apt/keyrings
@@ -319,6 +340,8 @@
       ansible.builtin.apt:
         name: eza
         state: present
+
+
 
   handlers:
     - name: reload-mounts
