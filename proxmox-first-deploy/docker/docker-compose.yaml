@@ -1,4 +1,22 @@
+x-common-env: &common-env
+  PUID: ${PUID}
+  PGID: ${PGID}
+  UMASK: ${UMASK}
+  TZ: ${TZ}
+
 services:
+
+  homepage:
+    image: ghcr.io/gethomepage/homepage:latest
+    container_name: homepage
+    ports:
+      - 80:3000
+    volumes:
+      - ${CONFIG_PATH}/homepage:/app/config
+    environment:
+      <<: *common-env
+      HOMEPAGE_ALLOWED_HOSTS: "*"
+
   pia:
     image: ghcr.io/hotio/base:alpinevpn
     container_name: pia
@@ -9,45 +27,116 @@ services:
       - net.ipv6.conf.all.disable_ipv6=1
     ports:
       - 8080:8080 # qbittorrent
+      - 9696:9696 # prowlarr
+      - 7878:7878 # radarr
+      - 6868:6868 # profilarr
     volumes:
       - ${CONFIG_PATH}/pia:/config
     environment:
-      - PUID=${PUID}
-      - PGID=${PGID}
-      - UMASK=002
-      - TZ=${TZ}
-      - VPN_ENABLED=true
-      - VPN_CONF=wg0
-      - VPN_PROVIDER=pia
-      - VPN_LAN_NETWORK=192.168.1.0/24,10.0.0.0/24
-      - VPN_LAN_LEAK_ENABLED=false
-      - VPN_EXPOSE_PORTS_ON_LAN=8080/tcp,8080/udp
-      - VPN_AUTO_PORT_FORWARD=true
-      - VPN_AUTO_PORT_FORWARD_TO_PORTS=
-      - VPN_FIREWALL_TYPE=auto
-      - VPN_HEALTHCHECK_ENABLED=false
-      - VPN_NAMESERVERS=
-      - VPN_PIA_USER=${PIA_USERNAME}
-      - VPN_PIA_PASS=${PIA_PASSWORD}
-      - VPN_PIA_PREFERRED_REGION=${PIA_REGION}
-      - VPN_PIA_DIP_TOKEN=no
-      - VPN_PIA_PORT_FORWARD_PERSIST=true
-      - PRIVOXY_ENABLED=false
-      - UNBOUND_ENABLED=false
-      - UNBOUND_NAMESERVERS
+      <<: *common-env
+      VPN_ENABLED: true
+      VPN_CONF: wg0
+      VPN_PROVIDER: pia
+      VPN_LAN_NETWORK: 192.168.1.0/24,10.0.0.0/24
+      VPN_LAN_LEAK_ENABLED: false
+      VPN_EXPOSE_PORTS_ON_LAN: 8080/tcp,8080/udp,9696/tcp,7878/tcp
+      VPN_AUTO_PORT_FORWARD: true
+      VPN_AUTO_PORT_FORWARD_TO_PORTS: 
+      VPN_FIREWALL_TYPE: auto
+      VPN_HEALTHCHECK_ENABLED: false
+      VPN_NAMESERVERS: 
+      VPN_PIA_USER: ${PIA_USERNAME}
+      VPN_PIA_PASS: ${PIA_PASSWORD}
+      VPN_PIA_PREFERRED_REGION: ${PIA_REGION}
+      VPN_PIA_DIP_TOKEN: no
+      VPN_PIA_PORT_FORWARD_PERSIST: true
+      PRIVOXY_ENABLED: false
+      UNBOUND_ENABLED: false
+      UNBOUND_NAMESERVERS: 
+
   qbittorrent:
     image: ghcr.io/hotio/qbittorrent
     container_name: qbittorrent
-    network_mode: "service:pia"
+    network_mode: service:pia
+    # ports:
+    #   - 8080:8080 # Move to vpn container
     volumes:
-      - ${CONFIG_PATH}/qbittorrent:/config
-      - ${ACTIVE_PATH}/torrent-downloads:/data
+      - ${CONFIG_PATH}/qbittorrent/config:/config/config
+      - ${CONFIG_PATH}/qbittorrent/data/BT_backup:/config/data/BT_backup
+      - ${ACTIVE_PATH}/torrents:/config/downloads
+      - ${ACTIVE_PATH}/.ephemeral/logs/qbittorrent:/config/data/logs
+      
     environment:
-      - PUID=${PUID}
-      - PGID=${PGID}
-      - UMASK=002
-      - TZ=${TZ}
-      # - WEBUI_PORTS=8080/tcp,8080/udp # set on VPN_EXPOSE_PORTS_ON_LAN in vpn container
-      - LIBTORRENT=v1
-    # ports: # Move to vpn container
-    #   - 8080:8080 # qbittorrent
+      <<: *common-env
+      # ====================================================================
+      # qBittorrent stores downloads in /config/downloads, not /config/data.
+      # To keep downloads out of config, tried to mount /config/config and
+      # /config/{downloads,data}, but then /config/{downloads,data} is owned
+      # by root, not th ehotio user (1000:1000).
+      # Passing in root to sidestep the issue, but need to scope permissions
+      # to a non-root user on the docker host. Can't do that in docker, will
+      # set up user in ansible later (maybe a common user for all container
+      # management). TODO.
+      # ====================================================================
+      PUID: 0
+      PGID: 0
+      LIBTORRENT: v1
+    labels:
+      - homepage.group=Downloaders
+      - homepage.name=qBittorrent
+      - homepage.icon=sh-qbittorrent
+      - homepage.href=http://localhost:8080
+      - homepage.description="Torrent downloader."
+
+  profilarr:
+    image: santiagosayshey/profilarr:latest
+    container_name: profilarr
+    network_mode: service:pia
+    # ports:
+    #   - 6868:6868 # Move to vpn container
+    volumes:
+      - ${CONFIG_PATH}/arr/profilarr:/config
+    environment:
+      <<: *common-env
+    restart: unless-stopped
+    labels:
+        - homepage.group=Arr
+        - homepage.name=Profilarr
+        - homepage.icon=sh-profilarr
+        - homepage.href=http://localhost:6868
+        - homepage.description="Quality profile sync for Radarr and Sonarr.""
+
+  prowlarr:
+    image: ghcr.io/hotio/prowlarr
+    container_name: prowlarr
+    network_mode: service:pia
+    # ports:
+    #   - 9696:9696 # Move to vpn container
+    environment:
+      <<: *common-env
+    volumes:
+      - ${CONFIG_PATH}/arr/prowlarr:/config
+    labels:
+      - homepage.group=Arr
+      - homepage.name=Prowlarr
+      - homepage.icon=sh-prowlarr
+      - homepage.href=http://localhost:9696
+      - homepage.description="Torrent indexer for *arr apps."
+
+  radarr:
+    image: ghcr.io/hotio/radarr
+    container_name: radarr
+    network_mode: service:pia
+    # ports:
+    #   - 7878:7878 # Move to vpn container
+    environment:
+      <<: *common-env
+    volumes:
+      - ${CONFIG_PATH}/arr/radarr:/config
+      - ${ARR_WATCH_PATH}/movies:/data
+    labels:
+      - homepage.group=Arr
+      - homepage.name=Radarr
+      - homepage.icon=sh-radarr
+      - homepage.href=http://localhost:7878
+      - homepage.description="Movie downloader."
