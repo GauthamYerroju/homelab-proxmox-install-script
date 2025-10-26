@@ -1,11 +1,33 @@
 x-common-env: &common-env
+  TZ: ${TZ}
+x-hotio-env: &hotio-env
+  <<: *common-env
   PUID: ${PUID}
   PGID: ${PGID}
   UMASK: ${UMASK}
-  TZ: ${TZ}
+x-hotio-env-vpn: &hotio-env-vpn
+  <<: *hotio-env
+  VPN_ENABLED: true
+  VPN_CONF: wg0
+  VPN_PROVIDER: pia
+  VPN_LAN_NETWORK: 192.168.1.0/24,10.0.0.0/24
+  VPN_LAN_LEAK_ENABLED: false
+  VPN_EXPOSE_PORTS_ON_LAN: 8080/tcp,8080/udp,9696/tcp,7878/tcp,6868/tcp
+  VPN_AUTO_PORT_FORWARD: true
+  VPN_AUTO_PORT_FORWARD_TO_PORTS:
+  VPN_FIREWALL_TYPE: auto
+  VPN_HEALTHCHECK_ENABLED: false
+  VPN_NAMESERVERS:
+  VPN_PIA_USER: ${PIA_USERNAME}
+  VPN_PIA_PASS: ${PIA_PASSWORD}
+  VPN_PIA_PREFERRED_REGION: ${PIA_REGION}
+  VPN_PIA_DIP_TOKEN: no
+  VPN_PIA_PORT_FORWARD_PERSIST: true
+  PRIVOXY_ENABLED: false
+  UNBOUND_ENABLED: false
+  UNBOUND_NAMESERVERS:
 
 services:
-
   homepage:
     image: ghcr.io/gethomepage/homepage:latest
     container_name: homepage
@@ -17,9 +39,20 @@ services:
       <<: *common-env
       HOMEPAGE_ALLOWED_HOSTS: "*"
 
-  pia:
-    image: ghcr.io/hotio/base:alpinevpn
-    container_name: pia
+  jellyfin:
+    container_name: jellyfin
+    image: ghcr.io/hotio/jellyfin
+    ports:
+      - 8096:8096
+    environment:
+      <<: *common-env
+    volumes:
+      - ${CONFIG_PATH}/jellyfin:/config
+      - ${MEDIA_PATH}:/data
+
+  qbittorrent:
+    image: ghcr.io/hotio/qbittorrent
+    container_name: qbittorrent
     cap_add:
       - NET_ADMIN
     sysctls:
@@ -31,55 +64,16 @@ services:
       - 7878:7878 # radarr
       - 6868:6868 # profilarr
     volumes:
-      - ${CONFIG_PATH}/pia:/config
+      - ${CONFIG_PATH}/qbittorrent:/config
+      - ${TORRENT_PATH}:/data
+    # Refer to README on why entrypoint: exists
+    entrypoint: >
+      sh -c "
+        chown -R ${PUID}:${PGID} /config &&
+        exec /init
+      "
     environment:
-      <<: *common-env
-      VPN_ENABLED: true
-      VPN_CONF: wg0
-      VPN_PROVIDER: pia
-      VPN_LAN_NETWORK: 192.168.1.0/24,10.0.0.0/24
-      VPN_LAN_LEAK_ENABLED: false
-      VPN_EXPOSE_PORTS_ON_LAN: 8080/tcp,8080/udp,9696/tcp,7878/tcp
-      VPN_AUTO_PORT_FORWARD: true
-      VPN_AUTO_PORT_FORWARD_TO_PORTS: 
-      VPN_FIREWALL_TYPE: auto
-      VPN_HEALTHCHECK_ENABLED: false
-      VPN_NAMESERVERS: 
-      VPN_PIA_USER: ${PIA_USERNAME}
-      VPN_PIA_PASS: ${PIA_PASSWORD}
-      VPN_PIA_PREFERRED_REGION: ${PIA_REGION}
-      VPN_PIA_DIP_TOKEN: no
-      VPN_PIA_PORT_FORWARD_PERSIST: true
-      PRIVOXY_ENABLED: false
-      UNBOUND_ENABLED: false
-      UNBOUND_NAMESERVERS: 
-
-  qbittorrent:
-    image: ghcr.io/hotio/qbittorrent
-    container_name: qbittorrent
-    network_mode: service:pia
-    # ports:
-    #   - 8080:8080 # Move to vpn container
-    volumes:
-      - ${CONFIG_PATH}/qbittorrent/config:/config/config
-      - ${CONFIG_PATH}/qbittorrent/data/BT_backup:/config/data/BT_backup
-      - ${ACTIVE_PATH}/torrents:/config/downloads
-      - ${ACTIVE_PATH}/.ephemeral/logs/qbittorrent:/config/data/logs
-      
-    environment:
-      <<: *common-env
-      # ====================================================================
-      # qBittorrent stores downloads in /config/downloads, not /config/data.
-      # To keep downloads out of config, tried to mount /config/config and
-      # /config/{downloads,data}, but then /config/{downloads,data} is owned
-      # by root, not th ehotio user (1000:1000).
-      # Passing in root to sidestep the issue, but need to scope permissions
-      # to a non-root user on the docker host. Can't do that in docker, will
-      # set up user in ansible later (maybe a common user for all container
-      # management). TODO.
-      # ====================================================================
-      PUID: 0
-      PGID: 0
+      <<: *hotio-env-vpn
       LIBTORRENT: v1
     labels:
       - homepage.group=Downloaders
@@ -91,7 +85,7 @@ services:
   profilarr:
     image: santiagosayshey/profilarr:latest
     container_name: profilarr
-    network_mode: service:pia
+    network_mode: service:qbittorrent
     # ports:
     #   - 6868:6868 # Move to vpn container
     volumes:
@@ -100,20 +94,20 @@ services:
       <<: *common-env
     restart: unless-stopped
     labels:
-        - homepage.group=Arr
-        - homepage.name=Profilarr
-        - homepage.icon=sh-profilarr
-        - homepage.href=http://localhost:6868
-        - homepage.description="Quality profile sync for Radarr and Sonarr.""
+      - homepage.group=Arr
+      - homepage.name=Profilarr
+      - homepage.icon=sh-profilarr
+      - homepage.href=http://localhost:6868
+      - homepage.description="Quality profile sync for Radarr and Sonarr.""
 
   prowlarr:
     image: ghcr.io/hotio/prowlarr
     container_name: prowlarr
-    network_mode: service:pia
+    network_mode: service:qbittorrent
     # ports:
     #   - 9696:9696 # Move to vpn container
     environment:
-      <<: *common-env
+      <<: *hotio-env
     volumes:
       - ${CONFIG_PATH}/arr/prowlarr:/config
     labels:
@@ -126,14 +120,14 @@ services:
   radarr:
     image: ghcr.io/hotio/radarr
     container_name: radarr
-    network_mode: service:pia
+    network_mode: service:qbittorrent
     # ports:
     #   - 7878:7878 # Move to vpn container
     environment:
-      <<: *common-env
+      <<: *hotio-env
     volumes:
       - ${CONFIG_PATH}/arr/radarr:/config
-      - ${ARR_WATCH_PATH}/movies:/data
+      - ${TORRENT_PATH}/media/:/data
     labels:
       - homepage.group=Arr
       - homepage.name=Radarr
