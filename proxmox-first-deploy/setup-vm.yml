@@ -59,6 +59,8 @@
       - smartmontools
       - parted
       - snapraid
+      - rename
+      - mediainfo
       # - mergerfs # repo version outdated, get from git directly
       # Shell UX tools
       # - duf
