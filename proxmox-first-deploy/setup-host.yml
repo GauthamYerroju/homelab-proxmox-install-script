@@ -37,3 +37,30 @@
         path: "{{ ansible_env.HOME }}/.ssh/{{ ssh_key_name }}"
         type: ed25519
         force: false
+    
+    # ===== Disable offloading on motherboard's Intel NIC =====
+    #  There is a known issue with this specific NIC, where it
+    # crashes and takes the network down with it. This has been
+    # isolated to the tso flag of the NIC.
+    # More info: https://forum.proxmox.com/threads/system-loses-networking.98705/post-787109
+    - name: Disable offloading on motherboard's Intel I219-V NIC
+      become: true
+      vars:
+        pci_addr: "0000:00:1f.6" # PCI slot of Intel NIC on this motherboard, stable b/w reinstalls.
+      block:
+        - name: Get interface name from PCI device
+          command: "ls /sys/bus/pci/devices/{{ pci_addr }}/net/"
+          register: nic_iface
+          changed_when: false
+          
+        - name: Set interface name fact
+          set_fact:
+            iface_name: "{{ nic_iface.stdout }}"
+            
+        - name: Ensure post-up command exists in /etc/network/interfaces
+          lineinfile:
+            path: /etc/network/interfaces
+            regexp: '^\s*post-up.*ethtool -K.*tso off gso off'
+            line: "    post-up ethtool -K {{ iface_name }} tso off gso off"
+            insertafter: "iface {{ iface_name }} inet"
+            state: present
