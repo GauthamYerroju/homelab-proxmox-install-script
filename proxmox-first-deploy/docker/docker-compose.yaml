@@ -85,6 +85,28 @@ services:
       <<: *common-env
     restart: unless-stopped
 
+  copyparty:
+    image: copyparty/ac:latest
+    container_name: copyparty
+    user: "${PUID}:${PGID}"
+    ports:
+      - 3923:3923
+    volumes:
+      - ${CONFIG_PATH}/copyparty:/cfg:z
+      - /mnt:/w:z
+    environment:
+      LD_PRELOAD: /usr/lib/libmimalloc-secure.so.2
+      # enable mimalloc by replacing "NOPE" with "2" for a nice speed-boost (will use twice as much ram)
+      PYTHONUNBUFFERED: 1
+      # ensures log-messages are not delayed (but can reduce speed a tiny bit)
+    stop_grace_period: 15s  # thumbnailer is allowed to continue finishing up for 10s after the shutdown signal
+    healthcheck:
+      # hide it from logs with "/._" so it matches the default --lf-url filter 
+      test: ["CMD-SHELL", "wget --spider -q 127.0.0.1:3923/?reset=/._"]
+      interval: 1m
+      timeout: 2s
+      retries: 5
+      start_period: 15s
 
   jellyfin:
     container_name: jellyfin
@@ -95,7 +117,7 @@ services:
       <<: *common-env
     volumes:
       - ${CONFIG_PATH}/jellyfin:/config
-      - ${ACTIVE_PATH}/media:/data/media
+      - ${ARR_PATH}/media:/data/media
     labels:
       - homepage.group=Media
       - homepage.name=Media Library
@@ -103,23 +125,23 @@ services:
       - homepage.href=http://${HOST_ADDRESS}:8096
       - homepage.siteMonitor=http://${HOST_ADDRESS}:8096
 
-  jellyseerr:
-    container_name: jellyseerr
-    image: ghcr.io/hotio/jellyseerr
-    depends_on:
-     - jellyfin
-    ports:
-      - 5055:5055
-    environment:
-      <<: *common-env
-    volumes:
-      - ${CONFIG_PATH}/jellyseerr:/config
-    labels:
-      - homepage.group=Media
-      - homepage.name=Explore New Media
-      - homepage.icon=sh-jellyseerr
-      - homepage.href=http://${HOST_ADDRESS}:5055
-      - homepage.siteMonitor=http://${HOST_ADDRESS}:5055
+  # jellyseerr:
+  #   container_name: jellyseerr
+  #   image: ghcr.io/hotio/jellyseerr
+  #   depends_on:
+  #    - jellyfin
+  #   ports:
+  #     - 5055:5055
+  #   environment:
+  #     <<: *common-env
+  #   volumes:
+  #     - ${CONFIG_PATH}/jellyseerr:/config
+  #   labels:
+  #     - homepage.group=Media
+  #     - homepage.name=Explore New Media
+  #     - homepage.icon=sh-jellyseerr
+  #     - homepage.href=http://${HOST_ADDRESS}:5055
+  #     - homepage.siteMonitor=http://${HOST_ADDRESS}:5055
 
   orcaslicer:
     image: lscr.io/linuxserver/orcaslicer:latest
@@ -225,8 +247,7 @@ services:
       <<: *hotio-env
     volumes:
       - ${CONFIG_PATH}/arr/radarr:/config
-      - ${ACTIVE_PATH}:/data
-      - ${ACTIVE_PATH}/media/movies:/data/media/movies
+      - ${ARR_PATH}/media/movies:/data/media/movies
     # Refer to README on why entrypoint: exists
     entrypoint: >
       sh -c "
@@ -254,8 +275,7 @@ services:
       <<: *common-env
     volumes:
       - ${CONFIG_PATH}/arr/sonarr:/config
-      - ${ACTIVE_PATH}:/data
-      - ${ACTIVE_PATH}/media/shows:/data/media/shows
+      - ${ARR_PATH}/media/shows:/data/media/shows
     labels:
       - homepage.group=Downloaders
       - homepage.name=TV Shows
@@ -276,8 +296,7 @@ services:
       # - WEBUI_PORTS=6767/tcp,6767/udp
     volumes:
       - ${CONFIG_PATH}/arr/bazarr:/config
-      - ${ACTIVE_PATH}:/data
-      - ${ACTIVE_PATH}/media:/data/media
+      - ${ARR_PATH}/media:/data/media
     labels:
       - homepage.group=Downloaders
       - homepage.name=Subtitles
