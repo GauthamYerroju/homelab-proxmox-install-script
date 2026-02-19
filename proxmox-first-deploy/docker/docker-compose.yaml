@@ -55,7 +55,7 @@ services:
     environment:
       <<: *common-env
       HOMEPAGE_ALLOWED_HOSTS: "*"
-  
+
   portainer:
     image: portainer/portainer-ce:lts
     container_name: portainer
@@ -73,18 +73,6 @@ services:
       - homepage.href=http://${HOST_ADDRESS}:9000
       - homepage.siteMonitor=http://${HOST_ADDRESS}:9000
 
-  filebrowser:
-    image: filebrowser/filebrowser
-    container_name: filebrowser
-    ports:
-      - 8081:80
-    volumes:
-      - /mnt:/srv
-      - ${CONFIG_PATH}/filebrowser:/config
-    environment:
-      <<: *common-env
-    restart: unless-stopped
-
   copyparty:
     image: copyparty/ac:latest
     container_name: copyparty
@@ -95,6 +83,7 @@ services:
       - ${CONFIG_PATH}/copyparty:/cfg:z
       - /mnt:/w:z
     environment:
+      <<: *hotio-env
       LD_PRELOAD: /usr/lib/libmimalloc-secure.so.2
       # enable mimalloc by replacing "NOPE" with "2" for a nice speed-boost (will use twice as much ram)
       PYTHONUNBUFFERED: 1
@@ -157,6 +146,7 @@ services:
       - 91:3001 # HTTPS
     shm_size: "1gb" #optional
     restart: unless-stopped
+
 # ==================================================================
 # Containers to go through VPN
 # ==================================================================
@@ -177,8 +167,7 @@ services:
       - 6767:6767 # bazarr
     volumes:
       - ${CONFIG_PATH}/qbittorrent:/config
-      - ${ACTIVE_PATH}:/data
-      - ${TORRENT_PATH}:/data/downloads
+      - ${ARR_PATH}:/data
     # Refer to README on why entrypoint: exists
     entrypoint: >
       sh -c "
@@ -248,6 +237,7 @@ services:
     volumes:
       - ${CONFIG_PATH}/arr/radarr:/config
       - ${ARR_PATH}/media/movies:/data/media/movies
+      - ${ARR_PATH}/downloads/radarr:/data/downloads/radarr
     # Refer to README on why entrypoint: exists
     entrypoint: >
       sh -c "
@@ -262,7 +252,6 @@ services:
       - homepage.href=http://${HOST_ADDRESS}:7878
       - homepage.siteMonitor=http://${HOST_ADDRESS}:7878
 
-
   sonarr:
     image: ghcr.io/hotio/sonarr
     container_name: sonarr
@@ -276,6 +265,7 @@ services:
     volumes:
       - ${CONFIG_PATH}/arr/sonarr:/config
       - ${ARR_PATH}/media/shows:/data/media/shows
+      - ${ARR_PATH}/downloads/tv-sonarr:/data/downloads/tv-sonarr
     labels:
       - homepage.group=Downloaders
       - homepage.name=TV Shows
